@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2078
-RANDOM=4096
-COOKIE_FILE="cookie.txt"
 SCORE_FILE="scores.txt"
-LOGIN_DATA="rihanna:785bdf267c5244"
-URL="http://0.0.0.0:8000/"
-
 scores=0
-function exit_game {
+#Bash doesn't support returning arrays...
+declare question
+declare correct_answer
+declare URL
+
+get_session_token() {
+  local SESSION_TOKEN=$(curl -s https://opentdb.com/api_token.php?command=request | jq -r ".token")
+  URL="https://opentdb.com/api.php?amount=1&category=18&type=boolean&token=${SESSION_TOKEN}"
+}
+
+exit_game() {
   echo "See you later!"
   exit
 }
 
-function right_answer {
+right_answer() {
   ((scores += 10))
   local RESPONSES=("Perfect!" "Awesome!" "You are a genius!" "Wow!" "Wonderful!")
   local size=${#RESPONSES[@]}
@@ -20,36 +25,33 @@ function right_answer {
   echo "${RESPONSES[${index}]}"
 }
 
-function wrong_answer {
+wrong_answer() {
   echo "Wrong answer, sorry!"
   echo "$name you have $((scores / 10)) correct answer(s)."
   echo "Your score is $scores points."
-  echo "User: $name, Score: $scores, Date: $(date +%Y-%m-%d)" >> $SCORE_FILE
+  echo "User: $name, Score: $scores, Date: $(date +%Y-%m-%d)" >>$SCORE_FILE
   scores=0
 
 }
 
-function play_game {
-  echo "What is your name?"
-  read name
+get_question() {
+  local response=$(curl -s "$URL")
+  question=$(echo -e "$response" | jq -r '.results[].question' | recode html..ascii)
+  correct_answer=$(echo -e "$response" | jq -r '.results[].correct_answer' | recode html..ascii)
+}
 
+play_game() {
+  clear
+  echo "What is your name?"
+  read -r name
   while [ TRUE ]; do
-    local response
-    local question
-    local answer
     local user_answer
-    local user_answer
-    curl -sc ${COOKIE_FILE} -u ${LOGIN_DATA} ${URL}login
-    response=$(curl -sb $COOKIE_FILE "${URL}game")
-    question=$(python3 -c "data=${response}; print(data.get('question'))")
-    answer=$(python3 -c "data=${response}; print(data.get('answer'))")
+    get_question
 
     echo "$question"
-    echo "True or False?"
+    read -r -p "True or False? " user_answer
 
-    read user_answer
-
-    if [[ $answer == $user_answer ]]; then
+    if [[ "$correct_answer" == "$user_answer" ]]; then
       right_answer
     else
       wrong_answer
@@ -58,8 +60,9 @@ function play_game {
   done
 }
 
-function display_scores {
-  if [[ -a $SCORE_FILE ]]; then
+display_scores() {
+  clear
+  if [[ -e $SCORE_FILE ]]; then
     echo "Player scores"
     cat $SCORE_FILE
   else
@@ -67,8 +70,9 @@ function display_scores {
   fi
 }
 
-function reset_scores {
-  if [[ -a $SCORE_FILE ]]; then
+reset_scores() {
+  clear
+  if [[ -e $SCORE_FILE ]]; then
     rm $SCORE_FILE
     echo "File deleted successfully!"
   else
@@ -76,16 +80,45 @@ function reset_scores {
   fi
 }
 
-echo "Welcome to the True or False Game!"
+menu() {
+  while [ TRUE ]; do
+    select opt in "Play" "Display Scores" "Reset Scores" "Exit"; do
+      case $opt in
+      "Play") play_game ;;
+      "Display Scores") display_scores ;;
+      "Reset Scores") reset_scores ;;
+      "Exit") exit_game ;;
+      *) echo "Invalid option!" ;;
+      esac
+      break
+    done
+  done
+}
 
-while [ TRUE ]; do
-  printf "\n0. Exit\n1. Play a game\n2. Display scores\n3. Reset scores\nEnter an option:\n"
-  read opt
-  case $opt in
-  0) exit_game ;;
-  1) play_game ;;
-  2) display_scores ;;
-  3) reset_scores ;;
-  *) echo "Invalid option!" ;;
-  esac
-done
+is_not_installed() {
+  if [[ "" = $(dpkg-query -W --showformat='${Status}\n' "$1" 2>/dev/null | grep "install ok installed") ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+install_required_packages() {
+  local REQUIRED_PACKAGES=("jq")
+  for pkg in $REQUIRED_PACKAGES; do
+    while is_not_installed "$pkg"; do
+      echo "Our game requires $pkg. Setting up $pkg."
+      sudo -S apt-get --yes install "$pkg"
+    done
+  done
+}
+
+run_game() {
+  clear
+  echo "Welcome to the True or False Game!"
+  get_session_token
+  menu
+}
+
+install_required_packages
+run_game
