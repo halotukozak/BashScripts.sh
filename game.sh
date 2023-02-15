@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2078
 SCORE_FILE="scores.txt"
-scores=0
 #Bash doesn't support returning arrays...
-declare question
-declare correct_answer
-declare URL
+declare question correct_answer URL category_URL
+declare -i scores answers
 
 get_session_token() {
-  local SESSION_TOKEN=$(curl -s https://opentdb.com/api_token.php?command=request | jq -r ".token")
-  URL="https://opentdb.com/api.php?amount=1&category=18&type=boolean&token=${SESSION_TOKEN}"
+  URL="https://opentdb.com/"
+  local SESSION_TOKEN=$(curl -s "$URL""api.php?command=request" | jq -r ".token")
+  category_URL=$URL"api.php?amount=1&type=boolean&token=${SESSION_TOKEN}"
 }
 
 exit_game() {
@@ -27,17 +26,36 @@ right_answer() {
 
 wrong_answer() {
   echo "Wrong answer, sorry!"
-  echo "$name you have $((scores / 10)) correct answer(s)."
+  echo "$name you have $answers correct answer(s)."
   echo "Your score is $scores points."
   echo "User: $name, Score: $scores, Date: $(date +%Y-%m-%d)" >>$SCORE_FILE
   scores=0
+  answers=0
 
 }
 
 get_question() {
-  local response=$(curl -s "$URL")
+  local response=$(curl -s "$category_URL")
+  if [[ "$#" == 1 ]]; then
+    response+=$1
+  fi
   question=$(echo -e "$response" | jq -r '.results[].question' | recode html..ascii)
   correct_answer=$(echo -e "$response" | jq -r '.results[].correct_answer' | recode html..ascii)
+}
+
+pick_category() {
+  while [ TRUE ]; do
+    select opt in "Play" "Display Scores" "Reset Scores" "Exit"; do
+      case $opt in
+      "Play") play_game ;;
+      "Display Scores") display_scores ;;
+      "Reset Scores") reset_scores ;;
+      "Exit") exit_game ;;
+      *) echo "Invalid option!" ;;
+      esac
+      break
+    done
+  done
 }
 
 play_game() {
@@ -46,7 +64,7 @@ play_game() {
   read -r name
   while [ TRUE ]; do
     local user_answer
-    get_question
+    get_question $category
 
     echo "$question"
     read -r -p "True or False? " user_answer
@@ -105,6 +123,7 @@ is_not_installed() {
 
 install_required_packages() {
   local REQUIRED_PACKAGES=("jq")
+  local pkg
   for pkg in $REQUIRED_PACKAGES; do
     while is_not_installed "$pkg"; do
       echo "Our game requires $pkg. Setting up $pkg."
@@ -113,10 +132,25 @@ install_required_packages() {
   done
 }
 
+get_categories() {
+  declare -A array
+  local category name id
+  while read -r category; do
+    IFS=: read name id < <(echo $category | sed 's/:/./2')
+
+    category_names+=($name)
+    category_ids+=($id)
+  done < <(
+    curl -s "$URL""api_category.php" | jq '.trivia_categories | .[] | { (.name) : (.id) }' | tr -d '"{}'
+  )
+  echo "t"
+}
+
 run_game() {
   clear
   echo "Welcome to the True or False Game!"
   get_session_token
+  get_categories
   menu
 }
 
